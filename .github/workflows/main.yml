@@ -43,6 +43,10 @@ jobs:
           echo "dir=$(dirname "$APP_JSON")" >> "$GITHUB_OUTPUT"
           echo "App folder: $(dirname "$APP_JSON")"
 
+      - name: Use the current Gemini model
+        working-directory: ${{ steps.app.outputs.dir }}
+        run: sed -i 's/gemini-2.5-flash/gemini-3.8-flash/g' src/config/appConfig.ts
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
