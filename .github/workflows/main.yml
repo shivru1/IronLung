@@ -1,0 +1,89 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-apk
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      EXPO_NO_TELEMETRY: 1
+      EXPO_NO_GIT_STATUS: 1
+
+    steps:
+      - name: Get the code
+        uses: actions/checkout@v4
+
+      - name: Unpack the zip, if there is one
+        run: |
+          shopt -s nullglob
+          for z in *.zip; do
+            echo "Unpacking $z"
+            unzip -q -o "$z" -d .
+          done
+
+      - name: Find the app folder
+        id: app
+        run: |
+          APP_JSON=$(find . -maxdepth 3 -name app.json -not -path '*/node_modules/*' -not -path './.git/*' | head -n 1)
+          if [ -z "$APP_JSON" ]; then
+            echo "app.json was not found. Upload the whole project folder first." >&2
+            exit 1
+          fi
+          echo "dir=$(dirname "$APP_JSON")" >> "$GITHUB_OUTPUT"
+          echo "App folder: $(dirname "$APP_JSON")"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Install Expo
+        working-directory: ${{ steps.app.outputs.dir }}
+        run: npm install expo@latest
+
+      - name: Install the libraries
+        working-directory: ${{ steps.app.outputs.dir }}
+        run: |
+          npx expo install react react-native expo-system-ui expo-notifications expo-task-manager expo-haptics expo-secure-store expo-font expo-linear-gradient expo-status-bar expo-speech-recognition react-native-svg react-native-safe-area-context react-native-mmkv react-native-nitro-modules zustand @expo-google-fonts/inter @expo-google-fonts/barlow-condensed @expo-google-fonts/jetbrains-mono
+          npx expo install typescript @types/react -- --save-dev
+
+      - name: Create the Android project
+        working-directory: ${{ steps.app.outputs.dir }}
+        run: npx expo prebuild --platform android
+
+      - name: Build the APK
+        working-directory: ${{ steps.app.outputs.dir }}/android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon -PreactNativeArchitectures=armeabi-v7a,arm64-v8a
+
+      - name: Keep the APK with this run
+        uses: actions/upload-artifact@v4
+        with:
+          name: iron-lung-apk
+          path: ${{ steps.app.outputs.dir }}/android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+
+      - name: Put the APK on the Releases page
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp "${{ steps.app.outputs.dir }}/android/app/build/outputs/apk/release/app-release.apk" iron-lung.apk
+          gh release create "build-${{ github.run_number }}-${{ github.run_attempt }}" iron-lung.apk --title "Iron Lung build ${{ github.run_number }}" --notes "Download iron-lung.apk on your phone and open it to install."
